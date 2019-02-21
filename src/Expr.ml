@@ -36,12 +36,12 @@ let update x v s = fun y -> if x = y then v else s y
 let s = update "x" 1 @@ update "y" 2 @@ update "z" 3 @@ update "t" 4 empty
 
 (* Some testing; comment this definition out when submitting the solution. *)
-let _ =
+(* let _ =
   List.iter
     (fun x ->
        try  Printf.printf "%s=%d\n" x @@ s x
        with Failure s -> Printf.printf "%s\n" s
-    ) ["x"; "a"; "y"; "z"; "t"; "b"]
+    ) ["x"; "a"; "y"; "z"; "t"; "b"] *)
 
 (* Expression evaluator
 
@@ -50,5 +50,25 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
+(* Utils *)
+let to_int b = if b then 1 else 0
+let to_bool x = x != 0
+
+let rec eval st expr = match expr with
+    | Const value -> value
+    | Var name -> st name
+    | Binop(operator, l, r)-> let x = eval st l in let y = eval st r in match operator with
+        | "*" -> x * y
+        | "/" -> x / y
+        | "%" -> x mod y
+        | "+" -> x + y
+        | "-" -> x - y
+        | "!!" -> to_int (to_bool x || to_bool y)
+        | "&&" -> to_int (to_bool x && to_bool y)
+        | "==" -> to_int (x == y)
+        | "!=" -> to_int (x <> y)
+        | "<=" -> to_int (x <= y)
+        | "<" -> to_int (x < y)
+        | ">=" -> to_int (x >= y)
+        | ">" -> to_int (x > y);;
                     
