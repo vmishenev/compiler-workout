@@ -22,8 +22,28 @@ type config = int list * Syntax.Stmt.config
      val eval : config -> prg -> config
 
    Takes a configuration and a program, and returns a configuration as a result
- *)                         
-let eval _ = failwith "Not yet implemented"
+ *)  
+
+
+let rec eval_one (stack, (s, i, o)) program = match program with
+     | BINOP op -> (match stack with
+         | y::x::tail -> ([Syntax.Expr.eval_op op x y] @ tail, (s, i, o))
+         | _ -> failwith "stack isn't filled")
+     | CONST c -> (c :: stack, (s, i, o))
+     | READ -> (match i with
+           | h :: t -> ([h] @ stack, (s, t, o))
+           | _ -> failwith "istream is empty")
+     | WRITE -> (match stack with 
+           | h :: t -> (t, (s, i, o @ [h]))
+           | _ -> failwith "stack is empty")
+     | LD x -> ((s x) :: stack, (s, i, o))
+     | ST x -> (match stack with 
+           | h::t -> (t, (Syntax.Expr.update x h s, i, o))
+           | _ -> failwith "stack is empty" )
+                       
+let rec eval conf program = match program with
+     | h :: t -> eval (eval_one conf h) t
+     | []            -> conf;;
 
 (* Top-level evaluation
 
@@ -41,4 +61,13 @@ let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o
    stack machine
  *)
 
-let compile _ = failwith "Not yet implemented"
+ let rec compile_expr expr = match expr with
+     | Syntax.Expr.Const c -> [CONST c]
+     | Syntax.Expr.Var v -> [LD v]
+     | Syntax.Expr.Binop (op, e1, e2) -> (compile_expr e1) @ (compile_expr e2) @ [BINOP op]
+
+ let rec compile stmt = match stmt with
+     | Syntax.Stmt.Read v -> [READ; ST v]
+     | Syntax.Stmt.Write e -> (compile_expr e) @ [WRITE]
+     | Syntax.Stmt.Assign (v, e) -> (compile_expr e) @ [ST v]
+     | Syntax.Stmt.Seq (prv, nxt) -> (compile prv) @ (compile nxt)
