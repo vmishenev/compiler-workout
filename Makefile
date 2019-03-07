@@ -1,4 +1,3 @@
-
 SHELL := /bin/bash
 
 .PHONY: all regression
@@ -14,3 +13,4 @@ regression:
 clean:
 	pushd src && make clean && popd
 	pushd regression && make clean && popd
+

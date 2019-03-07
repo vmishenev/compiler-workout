@@ -1,17 +1,42 @@
-TESTS=test001 test002 test003 test004 test005 test006 test007 test008
+OCAMLC = ocamlfind c
+OCAMLOPT = ocamlfind opt
+OCAMLDEP = ocamlfind dep
+SOURCES = common.ml test000.ml
+CAMLP5 = -syntax camlp5o -package ostap.syntax,GT.syntax.all
+PXFLAGS = $(CAMLP5)
+BFLAGS = -rectypes -I ../src
+OFLAGS = $(BFLAGS)
 
-RC=../src/rc.opt
+all: .depend $(TOPFILE).opt
 
-.PHONY: check $(TESTS) 
+.depend: $(SOURCES)
+	$(OCAMLDEP) $(PXFLAGS) *.ml > .depend
 
-check: $(TESTS) 
+$(TOPFILE).opt: $(SOURCES:.ml=.cmx)
+	$(OCAMLOPT) -o $(TOPFILE).opt $(OFLAGS) $(LIBS:.cma=.cmxa) -linkpkg -package ostap Expr.cmx Embedding.cmx $(SOURCES:.ml=.cmx)
 
-$(TESTS): %: %.expr
-	cat $@.input | $(RC) -i $< > $@.log && diff $@.log orig/$@.log
-	cat $@.input | $(RC) -s $< > $@.log && diff $@.log orig/$@.log
+$(TOPFILE).byte: $(SOURCES:.ml=.cmo)
+	$(OCAMLC) -o $(TOPFILE).byte $(BFLAGS) $(LIBS) -linkpkg -package ostap Expr.cmo Embedding.cmo $(SOURCES:.ml=.cmo) 
 
 clean:
-	find . -maxdepth 1 -name "*.log" -delete
-	rm -f test*.log *.s *~ $(TESTS)
-	pushd expressions && make clean
-	pushd deep-expressions && make clean
+	rm -Rf *.cmi *.cmo *.cmx *.annot *.o *.opt *.byte *~ .depend *.log
+
+-include .depend
+# generic rules
+
+###############
+%.cmi: %.mli
+	$(OCAMLC) -c $(BFLAGS) $(PXFLAGS) $<
+
+# Note: cmi <- mli should go first
+%.cmi: %.ml
+	$(OCAMLC) -c $(BFLAGS) $(PXFLAGS) $<
+
+%.cmo: %.ml
+	$(OCAMLC) -c $(BFLAGS) $(PXFLAGS) $<
+
+%.o: %.ml
+	$(OCAMLOPT) -c $(OFLAGS) $(STATIC) $(PXFLAGS) $<
+
+%.cmx: %.ml
+	$(OCAMLOPT) -c $(OFLAGS) $(STATIC) $(PXFLAGS) $<

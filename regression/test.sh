@@ -1,4 +1,3 @@
-make check
-pushd expressions && make check && popd
-pushd deep-expressions && make check && popd
-
+make TOPFILE=test000
+./test000.opt >> test000.log
+diff test000.log orig/test000.log
