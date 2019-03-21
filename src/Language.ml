@@ -131,7 +131,7 @@ module Stmt =
         | RepeatUntil (body, e) ->
           let cfg' = eval cfg body in
           let (s', _, _) = cfg' in
-          if Expr.to_bool (Expr.eval s' e) then eval (eval cfg' body) stmt  else cfg';;
+          if not(Expr.to_bool (Expr.eval s' e)) then eval cfg' stmt else cfg';;
                                
     (* Statement parser *)
     ostap (
