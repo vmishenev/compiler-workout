@@ -86,7 +86,68 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not yet implemented"
+let op_suff op = match op with
+  | "<"  -> "l"
+  | "<=" -> "le"
+  | ">"  -> "g"
+  | ">=" -> "ge"
+  | "==" -> "e"
+  | "!=" -> "ne"
+  | _    -> failwith ("Unknown cmp operator")
+
+let compile_binop env op  =  
+   let rhs, lhs, env = env#pop2 in
+   let zero reg = Mov (L 0, reg) in
+   let space, env = env#allocate in
+   let cmp op l r = [zero eax; 
+                           Binop ("cmp", r, l); 
+                           Set (op_suff op, "%al"); 
+                           Mov (eax, space)] in
+   let res_instr_list = match op with
+    | "+" 
+    | "-" 
+    | "*"  ->  if space = lhs then 
+                 [Binop (op, rhs, lhs)] 
+               else 
+                 [Binop (op, rhs, lhs); 
+                  Mov (lhs, space)]
+              
+    | "<=" 
+    | "<" 
+    | ">=" 
+    | ">" 
+    | "==" 
+    | "!=" -> cmp op lhs rhs
+    | "/"  -> [Mov (lhs, eax); zero edx; Cltd; IDiv rhs; Mov (eax, space)]        
+    | "%"  -> [Mov (lhs, eax); zero edx; Cltd; IDiv rhs; Mov (edx, space)]
+    | "!!" -> [zero eax; Mov (lhs, edx); Binop ("!!", rhs, edx); Set ("nz", "%al"); Mov (eax, space)]
+    | "&&" -> [zero eax; zero edx; 
+               Binop ("cmp", L 0, lhs); Set ("ne", "%al");
+               Binop ("cmp", L 0, rhs); Set ("ne", "%dl");
+               Binop ("&&", edx, eax); Mov   (eax, space)
+               ]
+    | _ -> failwith ("Unknown bin operator")
+  in env, res_instr_list
+
+let rec compile env prg = match prg with
+  | [] -> env, []
+  | ins::tail -> 
+    let crnt_env, instr_list = (match ins with
+      | BINOP op -> compile_binop env op
+      | CONST x  -> let space, loc_env = env#allocate       in loc_env, [Mov (L x, space)]
+      | READ     -> let space, loc_env = env#allocate       in loc_env, [Call "Lread"; Mov (eax, space)]
+      | WRITE    -> let var  , loc_env = env#pop            in loc_env, [Push var; Call "Lwrite"; Pop eax]
+      | LD x     -> let space, loc_env = env#allocate       in
+                    let var            = env#loc x          in loc_env, [Mov ((M var), space)]
+      | ST x     -> let value, loc_env = (env#global x)#pop in
+                    let var            = env#loc x          in loc_env, [Mov (value, (M var))]
+      | LABEL l  -> env, [Label l]
+      | CJMP (cond, l) -> let var  , loc_env = env#pop         in loc_env,[Binop ("cmp", L 0, var); CJmp (cond, l)]
+      | JMP l    -> env, [Jmp l]
+      ) in
+        let result_env, result_instr_list = compile crnt_env tail in
+            result_env, (instr_list @ result_instr_list)
+
 
 (* A set of strings *)           
 module S = Set.Make (String)
