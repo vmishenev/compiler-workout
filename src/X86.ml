@@ -138,9 +138,9 @@ let rec compile env prg = match prg with
       | READ     -> let space, loc_env = env#allocate       in loc_env, [Call "Lread"; Mov (eax, space)]
       | WRITE    -> let var  , loc_env = env#pop            in loc_env, [Push var; Call "Lwrite"; Pop eax]
       | LD x     -> let space, loc_env = env#allocate       in
-                    let var            = env#loc x          in loc_env, [Mov ((M var), space)]
+                    let var            = env#loc x          in loc_env, [Mov ((M var), eax); Mov (eax, space)]
       | ST x     -> let value, loc_env = (env#global x)#pop in
-                    let var            = env#loc x          in loc_env, [Mov (value, (M var))]
+                    let var            = env#loc x          in loc_env, [Mov (value, eax); Mov (eax, (M var))]
       | LABEL l  -> env, [Label l]
       | CJMP (cond, l) -> let var  , loc_env = env#pop         in loc_env,[Binop ("cmp", L 0, var); CJmp (cond, l)]
       | JMP l    -> env, [Jmp l]
