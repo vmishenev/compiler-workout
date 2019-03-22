@@ -99,19 +99,16 @@ let compile_binop env op  =
    let rhs, lhs, env = env#pop2 in
    let zero reg = Mov (L 0, reg) in
    let space, env = env#allocate in
-   let cmp op l r = [zero eax; 
-                           Binop ("cmp", r, l); 
+   let cmp op l r = [ Mov (lhs, eax); 
+                           Binop ("cmp", rhs, eax); 
+                           Mov (eax, lhs);
+                           zero eax;
                            Set (op_suff op, "%al"); 
                            Mov (eax, space)] in
    let res_instr_list = match op with
     | "+" 
     | "-" 
-    | "*"  ->  if space = lhs then 
-                 [Binop (op, rhs, lhs)] 
-               else 
-                 [Binop (op, rhs, lhs); 
-                  Mov (lhs, space)]
-              
+    | "*"  ->  [Mov (lhs, eax); Binop (op, rhs, eax); Mov (eax, space)]
     | "<=" 
     | "<" 
     | ">=" 
