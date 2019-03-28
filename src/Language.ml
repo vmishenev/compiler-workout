@@ -62,7 +62,10 @@ module Expr =
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-    *)                                                       
+    *) 
+    let to_int b = if b then 1 else 0
+    let to_bool x = x != 0
+                                                      
     let to_func op =
       let bti   = function true -> 1 | _ -> 0 in
       let itb b = b <> 0 in
@@ -133,7 +136,7 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) | Repeat of t * Expr.t
+    (* loop with a post-condition       *) | RepeatUntil of t * Expr.t
     (* call a procedure                 *) | Call   of string * Expr.t list with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
@@ -150,12 +153,63 @@ module Stmt =
 
        which returns a list of formal parameters and a body for given definition
     *)
-    let rec eval _ = failwith "Not Implemented Yet"
-                                
+    let rec eval env (s, i, o) stmt = let cfg = (s, i, o) in
+       match stmt with
+	| Read       v  -> let head::tail = i in
+            State.update v head s, tail, o
+        | Write      e  -> (s, i, o @ [Expr.eval s e]) 
+        | Assign (v, e) -> (State.update v (Expr.eval s e) s, i, o)
+        | Seq (prev, next) -> eval env ( eval env cfg prev) next
+        | Skip -> cfg
+        | If(cond, then_branch, else_branch) ->
+          eval env cfg (if Expr.to_bool (Expr.eval s cond) then  then_branch else else_branch) 
+        | While (e, body) ->
+          if Expr.to_bool (Expr.eval s e) then eval env (eval env cfg body) stmt else cfg
+        | RepeatUntil (body, e) ->
+          let cfg' = eval env cfg body in
+          let (s', _, _) = cfg' in
+          if not(Expr.to_bool (Expr.eval s' e)) then eval env cfg' stmt else cfg'
+        | Call (name, args) ->
+              let (arg_names, local_vars, body) = env#definition name in
+              cfg
+              (*TODO*);;
+                               
     (* Statement parser *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
-    )
+    ostap (
+      simple_stmt:
+                  x:IDENT ":=" e:!(Expr.expr)       {Assign(x, e)}
+               | "read" "(" x:IDENT ")"           {Read x}
+               | "write" "(" e:!(Expr.expr) ")" {Write e};
+
+      construct_stmt:
+           "while" cond:!(Expr.expr) "do" body:!(parse) "od" 
+            { While (cond, body)}
+           | "for" init:!(parse) "," cond:!(Expr.expr) "," action:!(parse) "do" body:!(parse) "od"
+            {  Seq(init, While(cond, Seq(body, action))) }
+           | "repeat" body:!(parse) "until" cond:!(Expr.expr)
+            { RepeatUntil (body, cond)}
+           | "if" cond:!(Expr.expr)
+                "then" th:!(parse)
+                elif_branch: (%"elif" !(Expr.expr) %"then" !(parse))*
+                else_branch:  (%"else" !(parse))?
+                "fi"
+            {
+                    let else_branch' = match else_branch with
+                        | Some x -> x
+                        | _ -> Skip
+                    in
+                    let elif_branch' = List.fold_right (fun (cond, body) t -> If (cond, body, t)) elif_branch else_branch' in
+                    If (cond, th, elif_branch')
+            }
+           | "skip" {Skip};
+
+      call_stmt: name:IDENT "(" args:(!(Expr.parse))* ")" {Call (name, args)};
+     
+      stmt:    simple_stmt | construct_stmt | call_stmt;
+
+      parse:     line:stmt ";" rest:parse      {Seq(line, rest)} 
+	       | stmt
+      )
       
   end
 
@@ -167,7 +221,13 @@ module Definition =
     type t = string * (string list * string list * Stmt.t)
 
     ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+         parse: "fun" name:IDENT "(" args:(IDENT)* ")" local_vars:(%"local" (IDENT)*)? "{" body:!(Stmt.parse) "}"
+          {
+              let local_vars_list = match local_vars with
+              | Some x -> x
+              | _ -> [] (*empty*) in 
+              name, (args, local_vars_list, body)
+          }
     )
 
   end

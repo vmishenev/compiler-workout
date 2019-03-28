@@ -31,7 +31,38 @@ type config = (prg * State.t) list * int list * Stmt.config
    Takes an environment, a configuration and a program, and returns a configuration as a result. The
    environment is used to locate a label to jump to (via method env#labeled <label_name>)
 *)                         
-let rec eval _ = failwith "Not Implemented Yet"
+let rec eval_one (stack, (s, i, o)) program = match program with
+     | BINOP op -> (match stack with
+         | y::x::tail -> ([Language.Expr.eval_op op x y] @ tail, (s, i, o))
+         | _ -> failwith "stack isn't filled")
+     | CONST c -> (c :: stack, (s, i, o))
+     | READ -> (match i with
+           | h :: t -> ([h] @ stack, (s, t, o))
+           | _ -> failwith "istream is empty")
+     | WRITE -> (match stack with 
+           | h :: t -> (t, (s, i, o @ [h]))
+           | _ -> failwith "stack is empty")
+     | LD x -> ((s x) :: stack, (s, i, o))
+     | ST x -> (match stack with 
+           | h::t -> (t, (Language.State.update x h s, i, o))
+           | _ -> failwith "stack is empty" )
+     | LABEL l -> (stack, (s, i, o))
+   
+                       
+let rec eval env conf program = match program with
+     | h :: t -> (match h with 
+          | JMP label -> eval env conf (env#labeled label)
+          | CJMP (fl, l) ->
+            (
+               let (stack, c)=conf in
+		    match stack with
+		    | x :: tail_stack -> eval env (tail_stack, c)  
+                                  (if (x = 0 && fl = "z" || x != 0 && fl = "nz") then (env#labeled l) else  t )
+		    | _ -> failwith "stack is empty" 
+             )
+          | _ -> eval env (eval_one conf h) t
+        )
+| [] -> conf;;
 
 (* Top-level evaluation
 
@@ -56,4 +87,48 @@ let run p i =
    Takes a program in the source language and returns an equivalent program for the
    stack machine
 *)
-let compile _ = failwith "Not Implemented Yet"
+class label_generator =
+  object (self)
+    val mutable counter = 0
+    method generate =
+      {<counter = counter + 1>}, "l_" ^ string_of_int counter
+  end
+
+
+let rec compile_expr expr = match expr with
+     | Language.Expr.Const c -> [CONST c]
+     | Language.Expr.Var v -> [LD v]
+     | Language.Expr.Binop (op, e1, e2) -> (compile_expr e1) @ (compile_expr e2) @ [BINOP op]
+
+let rec compile_lbls stmt lambda last_l = match stmt with
+     | Language.Stmt.Read v -> [READ; ST v], false, lambda
+     | Language.Stmt.Write e -> (compile_expr e) @ [WRITE], false, lambda
+     | Language.Stmt.Assign (v, e) -> (compile_expr e) @ [ST v], false, lambda
+     | Language.Stmt.Seq (prv, nxt) -> let (lambda, lbl) = lambda#generate in
+                                       let (prg1, used1, lambda) = compile_lbls prv lambda lbl in
+                                       let (prg2, used2, lambda) = compile_lbls nxt lambda last_l in
+                                       (prg1 @
+                                       (if used1 then [LABEL lbl] else []) @
+                                        prg2), used2, lambda
+     | Language.Stmt.Skip -> [], false, lambda
+     | Language.Stmt.While (e, body) ->
+       let (lambda, l_check) = lambda#generate in
+       let (lambda, l_loop) = lambda#generate in
+       let (loop_body, _, lambda) = compile_lbls body lambda l_check in
+       [JMP l_check; LABEL l_loop] @ (loop_body) @ [LABEL l_check] @ (compile_expr e) @ [CJMP("nz", l_loop)], false, lambda
+       (*[LABEL l_cond] @ (expr e) @ [CJMP ("z", l_od)] @ (compile body) @ [JMP l_cond; LABEL l_od]*)
+     | Stmt.RepeatUntil (body, e ) ->
+       let (lambda, l_loop) = lambda#generate in
+       let (loop_body, _, lambda) = compile_lbls body lambda last_l in
+       [LABEL l_loop] @ (loop_body ) @ (compile_expr e) @ [CJMP ("z", l_loop)], false, lambda
+     | Language.Stmt.If (e, s1, s2) ->
+       let (lambda, l_else) = lambda#generate in
+       let (then_body, used1, lambda) = compile_lbls s1 lambda last_l in
+       let (els_body, used2, lambda) = compile_lbls s2 lambda last_l in
+       (compile_expr e) @ [CJMP ("z", l_else)] @ (then_body) @ (if used1 then [] else [JMP last_l]) @ [ LABEL l_else] 
+       @ (els_body) @ (if used2 then [] else [JMP last_l]) , true, lambda
+     | Language.Stmt.Call (fn_name, args) -> (*TODO*) [CALL fn_name], false, lambda
+
+let rec compile prg = let lambda, l = (new label_generator)#generate in
+                    let prg', used, _ = compile_lbls prg lambda l  in
+                    prg' @ (if used then [LABEL l] else [])
