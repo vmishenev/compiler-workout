@@ -73,7 +73,7 @@ let rec eval env conf program = match program with
                 List.fold_left (fun (s, value::stack_tail) name -> (State.update name value s, stack_tail))
                  (local_state, stack) arg_names in
                 eval env (control_stack, updated_stack, (local_state_init, i, o)) t
-          | END :: _ ->
+          | END  ->
                  let (control_stack, stack, (state, i, o))=conf in
    		 (
                  match control_stack with
