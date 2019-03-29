@@ -31,22 +31,22 @@ type config = (prg * State.t) list * int list * Stmt.config
    Takes an environment, a configuration and a program, and returns a configuration as a result. The
    environment is used to locate a label to jump to (via method env#labeled <label_name>)
 *)                         
-let rec eval_one (stack, (s, i, o)) program = match program with
+let rec eval_one (cs, stack, (s, i, o) ) program = match program with
      | BINOP op -> (match stack with
-         | y::x::tail -> ([Language.Expr.eval_op op x y] @ tail, (s, i, o))
+         | y::x::tail -> (cs, [Language.Expr.to_func op x y] @ tail, (s, i, o))
          | _ -> failwith "stack isn't filled")
-     | CONST c -> (c :: stack, (s, i, o))
+     | CONST c -> (cs, c :: stack, (s, i, o))
      | READ -> (match i with
-           | h :: t -> ([h] @ stack, (s, t, o))
+           | h :: t -> (cs, [h] @ stack, (s, t, o))
            | _ -> failwith "istream is empty")
      | WRITE -> (match stack with 
-           | h :: t -> (t, (s, i, o @ [h]))
+           | h :: t -> (cs, t, (s, i, o @ [h]))
            | _ -> failwith "stack is empty")
-     | LD x -> ((s x) :: stack, (s, i, o))
+     | LD x -> (cs, (State.eval s x) :: stack, (s, i, o))
      | ST x -> (match stack with 
-           | h::t -> (t, (Language.State.update x h s, i, o))
+           | h::t -> (cs, t, (Language.State.update x h s, i, o))
            | _ -> failwith "stack is empty" )
-     | LABEL l -> (stack, (s, i, o))
+     | LABEL l -> (cs, stack, (s, i, o));;
    
                        
 let rec eval env conf program = match program with
@@ -54,12 +54,31 @@ let rec eval env conf program = match program with
           | JMP label -> eval env conf (env#labeled label)
           | CJMP (fl, l) ->
             (
-               let (stack, c)=conf in
+               let (cs, stack, c)=conf in
 		    match stack with
-		    | x :: tail_stack -> eval env (tail_stack, c)  
+		    | x :: tail_stack -> eval env (cs, tail_stack, c)  
                                   (if (x = 0 && fl = "z" || x != 0 && fl = "nz") then (env#labeled l) else  t )
 		    | _ -> failwith "stack is empty" 
-             )
+             
+
+               )
+          | CALL name -> 
+                let (control_stack, stack, (state, i, o))=conf in
+      		let prg = env#labeled name in
+      		eval env ((t, state)::control_stack, stack, (state, i, o)) prg
+          | BEGIN (arg_names, local_names)  ->
+                let (control_stack, stack, (state, i, o))=conf in
+                let local_state = State.push_scope state (arg_names @ local_names) in
+                let local_state_init, updated_stack = 
+                List.fold_left (fun (s, value::stack_tail) name -> (State.update name value s, stack_tail))
+                 (local_state, stack) arg_names in
+                eval env (control_stack, updated_stack, (local_state_init, i, o)) t
+          | END :: _ ->
+                 let (control_stack, stack, (state, i, o))=conf in
+   		 (match control_stack with
+   		 | [] -> conf
+    	         | (t, old_state) :: control_stack ->
+     	        eval env (control_stack, stack, (State.drop_scope state old_state, i, o)) t
           | _ -> eval env (eval_one conf h) t
         )
 | [] -> conf;;
@@ -127,8 +146,16 @@ let rec compile_lbls stmt lambda last_l = match stmt with
        let (els_body, used2, lambda) = compile_lbls s2 lambda last_l in
        (compile_expr e) @ [CJMP ("z", l_else)] @ (then_body) @ (if used1 then [] else [JMP last_l]) @ [ LABEL l_else] 
        @ (els_body) @ (if used2 then [] else [JMP last_l]) , true, lambda
-     | Language.Stmt.Call (fn_name, args) -> (*TODO*) [CALL fn_name], false, lambda
+     | Language.Stmt.Call (fn_name, args) -> List.concat (List.map compile_expr (List.rev args)) @ [CALL fn_name], false, lambda;;
 
-let rec compile prg = let lambda, l = (new label_generator)#generate in
+
+let rec compile_stmt prg = let lambda, l = (new label_generator)#generate in
                     let prg', used, _ = compile_lbls prg lambda l  in
                     prg' @ (if used then [LABEL l] else [])
+
+let rec  compile_defs func_defs =
+  List.fold_left(fun prev (name, (args, local_vars, body)) -> 
+    prev @ [LABEL name] @ [BEGIN (args, local_vars)] @ (compile_stmt body) @ [END]
+  ) [] func_defs
+
+let compile (func_defs, stmt) =  (compile_stmt stmt) @ [END] @ (compile_defs func_defs)

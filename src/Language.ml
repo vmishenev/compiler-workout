@@ -99,7 +99,7 @@ module Expr =
                                                                                                                   
     *)
     ostap (                                      
-      parse:
+      expr:
 	  !(Ostap.Util.expr 
              (fun x -> x)
 	     (Array.map (fun (a, s) -> a, 
@@ -118,7 +118,7 @@ module Expr =
       primary:
         n:DECIMAL {Const n}
       | x:IDENT   {Var x}
-      | -"(" parse -")"
+      | -"(" expr -")"
     )
     
   end
@@ -171,8 +171,14 @@ module Stmt =
           if not(Expr.to_bool (Expr.eval s' e)) then eval env cfg' stmt else cfg'
         | Call (name, args) ->
               let (arg_names, local_vars, body) = env#definition name in
-              cfg
-              (*TODO*);;
+              let local_state = State.push_scope s (arg_names @ local_vars) in
+	      let bindings = List.combine arg_names (List.map (Expr.eval s) args) in
+              let local_state_init =
+                    List.fold_right(fun (arg_name, arg_value) s' -> State.update arg_name arg_value s')
+                    bindings local_state
+             in
+             let (end_state, i, o) = eval env (local_state_init, i, o) body in
+            (State.drop_scope end_state s, i, o);;
                                
     (* Statement parser *)
     ostap (
@@ -203,7 +209,7 @@ module Stmt =
             }
            | "skip" {Skip};
 
-      call_stmt: name:IDENT "(" args:(!(Expr.parse))* ")" {Call (name, args)};
+      call_stmt: name:IDENT "(" args:(!(Expr.expr))* ")" {Call (name, args)};
      
       stmt:    simple_stmt | construct_stmt | call_stmt;
 
