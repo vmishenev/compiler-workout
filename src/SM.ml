@@ -75,10 +75,12 @@ let rec eval env conf program = match program with
                 eval env (control_stack, updated_stack, (local_state_init, i, o)) t
           | END :: _ ->
                  let (control_stack, stack, (state, i, o))=conf in
-   		 (match control_stack with
+   		 (
+                 match control_stack with
    		 | [] -> conf
     	         | (t, old_state) :: control_stack ->
      	        eval env (control_stack, stack, (State.drop_scope state old_state, i, o)) t
+                )
           | _ -> eval env (eval_one conf h) t
         )
 | [] -> conf;;
