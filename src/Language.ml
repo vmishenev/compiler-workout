@@ -99,15 +99,15 @@ module Expr =
     
     let rec eval env ((st, i, o, r) as cfg) expr =      
       match expr with
-      | Const n -> (s, i, o, Some n)
+      | Const n -> (st, i, o, Some n)
       | Var   x -> (st, i, o, Some (State.eval st x))
       | Binop (op, x, y) ->  let ((_, _, _, Some x') as cfg') = eval env cfg x in
          let (st', i', o', Some y') = eval env cfg' y in
-         (st', i', o', Some (to_func op a b))
+         (st', i', o', Some (to_func op x' y'))
       | Call (name, args) ->
          let ((st', i', o', args) as cfg') = List.fold_left (fun (s, i, o, args) arg ->
 			let (s, i, o, Some res) = eval env (s, i, o, None) arg in 
-                         (s, i, o, args @ [res])) (s, i, o, []) args in env#definition env name args (st', i', o', None)
+                         (s, i, o, args @ [res])) (st, i, o, []) args in env#definition env name args (st', i', o', None)
          
     (* Expression parser. You can use the following terminals:
 
@@ -134,8 +134,7 @@ module Expr =
       primary:
         n:DECIMAL {Const n}
       | x:IDENT   {Var x}
-      | name:IDENT "(" args:(!(Expr.expr))* ")" {Call (name, args)};
-      | fun_name:IDENT -"(" fun_args:!(Util.list0)[parse] -")" { Call (fun_name, fun_args) }
+      | name:IDENT "(" args:!(Util.list0 expr)  ")" {Call (name, args)}
       | -"(" expr -")"
     )
     
@@ -173,26 +172,27 @@ module Stmt =
 
     let rec eval env ((s, i, o, _) as cfg) k stmt = match stmt with
 	| Read       v  -> let head::tail = i in
-              (State.update v head s, tail, o, None) Skip k
-        | Write      e  -> (s, i, o @ [Expr.eval s e], None) 
+            eval env (State.update v head s, tail, o, None) Skip k
+        | Write e  ->    let (s', i', o', Some v) = Expr.eval env cfg e in
+                    eval env (s', i', o' @ [v], None) Skip k
         | Assign (v, e) -> let (s, i, o, Some r) = Expr.eval env cfg e in
               eval env (State.update v r s, i, o, Some r) Skip k
         | Seq (prev, next) ->  eval env cfg (meta_op k next) prev
-        | Skip -> match k with
+        | Skip -> (match k with
               | Skip -> cfg
-              | _ -> eval env cfg Skip k
+              | _ -> eval env cfg Skip k)
         | If(cond, then_branch, else_branch) ->
               let ((s, i, o, Some cond_res) as cfg') = Expr.eval env cfg cond in
               eval env cfg' k (if Expr.to_bool (cond_res) then  then_branch else else_branch) 
         | While (e, body) ->
-              let ((s, i, o, Some e_res) as cfg') = Expr.e env cfg cond in
+              let ((s, i, o, Some e_res) as cfg') = Expr.eval env cfg e in
               if Expr.to_bool (e_res) then eval env cfg' (meta_op k stmt) body else 
               eval env (s, i, o, None) Skip k
         | RepeatUntil (body, e) ->
-              eval env cfg (meta k (While (Expr.Binop ("==", e, Expr.Const 0), body))) body
+              eval env cfg (meta_op k (While (Expr.Binop ("==", e, Expr.Const 0), body))) body
         | Call (name, args) ->
               (*cfg across expr*)
-              (eval env (Expr.eval env cfg (Expr.Call (name, args))) Skip k
+              (eval env (Expr.eval env cfg (Expr.Call (name, args)))) Skip k
               (*let (arg_names, local_vars, body) = env#definition name in
               let local_state = State.push_scope s (arg_names @ local_vars) in
 	      let bindings = List.combine arg_names (List.map (Expr.eval s) args) in
@@ -204,10 +204,8 @@ module Stmt =
             (State.drop_scope end_state s, i, o)*)
         | Return res -> match res with
            | Some res -> Expr.eval env cfg res
-           | _ -> (st, i, o, None)
-         ;;
-
-         
+           | _ -> (s, i, o, None)
+ 
     (* Statement parser *)
     ostap (
       simple_stmt:
