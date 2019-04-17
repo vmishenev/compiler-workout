@@ -133,8 +133,8 @@ module Expr =
       
       primary:
         n:DECIMAL {Const n}
-      | x:IDENT   {Var x}
       | name:IDENT "(" args:!(Util.list0 expr)  ")" {Call (name, args)}
+      | x:IDENT   {Var x}
       | -"(" expr -")"
     )
     
@@ -235,9 +235,10 @@ module Stmt =
             }
            | "skip" {Skip};
 
-      call_stmt: name:IDENT "(" args:(!(Expr.expr))* ")" {Call (name, args)};
+      call_stmt:    name:IDENT "(" args:(!(Expr.expr))* ")" {Call (name, args)};
+      return_stmt:  "return" e:!(Expr.expr)?                { Return e };
      
-      stmt:    simple_stmt | construct_stmt | call_stmt;
+      stmt:    simple_stmt | construct_stmt | call_stmt | return_stmt;
 
       parse:     line:stmt ";" rest:parse      {Seq(line, rest)} 
 	       | stmt
@@ -252,8 +253,9 @@ module Definition =
     (* The type for a definition: name, argument list, local variables, body *)
     type t = string * (string list * string list * Stmt.t)
 
-    ostap (                                      
-         parse: "fun" name:IDENT "(" args:(IDENT)* ")" local_vars:(%"local" (IDENT)*)? "{" body:!(Stmt.parse) "}"
+    ostap (
+         arg: IDENT;                                        
+         parse: "fun" name:IDENT "(" args:!(Util.list0 arg) ")" local_vars:(%"local" !(Util.list arg))? "{" body:!(Stmt.parse) "}"
           {
               let local_vars_list = match local_vars with
               | Some x -> x
