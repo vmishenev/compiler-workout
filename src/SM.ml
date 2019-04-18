@@ -26,9 +26,7 @@ type prg = insn list
 type config = (prg * State.t) list * Value.t list * Expr.config
 
 (* Stack machine interpreter
-
      val eval : env -> config -> prg -> config
-
    Takes an environment, a configuration and a program, and returns a configuration as a result. The
    environment is used to locate a label to jump to (via method env#labeled <label_name>)
 *)
@@ -94,9 +92,7 @@ let rec eval env conf program = match program with
 | [] -> conf;;
 
 (* Top-level evaluation
-
      val run : prg -> int list -> int list
-
    Takes a program, an input stream, and returns an output stream this program calculates
 *)
 let run p i =
@@ -115,7 +111,7 @@ let run p i =
          method builtin (cstack, stack, (st, i, o)) f n p =
            let f = match f.[0] with 'L' -> String.sub f 1 (String.length f - 1) | _ -> f in
            let args, stack' = split n stack in
-           let (st, i, o, r) = Language.Builtin.eval (st, i, o, None) (List.rev args) f in
+           let (st, i, o, r) = Language.Builtin.eval (st, i, o, None) args f in
            let stack'' = if p then stack' else let Some r = r in r::stack' in
            Printf.printf "Builtin: %s\n";
            (cstack, stack'', (st, i, o))
@@ -127,19 +123,17 @@ let run p i =
   o
 
 (* Stack machine compiler
-
      val compile : Language.t -> prg
-
    Takes a program in the source language and returns an equivalent program for the
    stack machine
 *)
+
 class label_generator =
   object (self)
     val mutable counter = 0
     method generate =
       {<counter = counter + 1>}, "l_" ^ string_of_int counter
   end
-
 
 let rec compile_expr expr = match expr with
      | Language.Expr.Const c   -> [CONST c]
@@ -154,9 +148,8 @@ let rec compile_expr expr = match expr with
         let args_value = List.concat (List.map compile_expr (List.rev args)) in
         args_value @ [CALL (name, List.length args, true)]
 
+
 let rec compile_lbls stmt lambda last_l = match stmt with
-     (*| Language.Stmt.Read v -> [READ; ST v], false, lambda
-     | Language.Stmt.Write e -> (compile_expr e) @ [WRITE], false, lambda*)
      | Stmt.Assign (v, ind, e) -> (match ind with
                                  | [] -> (compile_expr e @ [ST v]), false, lambda
                                  | _  -> let compiled_ind = List.fold_left (fun p id -> p @ (compile_expr id)) [] (List.rev ind) in
@@ -190,15 +183,20 @@ let rec compile_lbls stmt lambda last_l = match stmt with
      | Stmt.Return res      -> (match res with
                             | Some e -> (compile_expr e) @ [RET true], false, lambda
                             | _      -> [RET false], false, lambda)
+    
 
+let compile_stmt lambda prg = let lambda, l = lambda#generate in
+                    let prg', used, lambda = compile_lbls prg lambda l  in
+                    lambda, prg' @ (if used then [LABEL l] else [])
 
-let rec compile_stmt prg = let lambda, l = (new label_generator)#generate in
-                    let prg', used, _ = compile_lbls prg lambda l  in
-                    prg' @ (if used then [LABEL l] else [])
+let rec  compile_defs lambda func_defs =
+      List.fold_left (fun (lbd, prg) (name, (args, locals, body)) -> 
+        let (lbd, body) = compile_stmt lbd body in
+        lbd, prg @ [LABEL name] @ [BEGIN (name, args, locals)] @ body @ [END]) (lambda, []) func_defs
 
-let rec  compile_defs func_defs =
-  List.fold_left(fun prev (name, (args, local_vars, body)) -> 
-    prev @ [LABEL name] @ [BEGIN (name, args, local_vars)] @ (compile_stmt body) @ [END]
-  ) [] func_defs
+let compile (func_defs, stmt) = 
+   let lambda = new label_generator in
+    let lambda, main = compile_stmt lambda stmt in
+    let lambda, defs = compile_defs lambda func_defs in
+    main @ [END] @ defs
 
-let compile (func_defs, stmt) = (compile_stmt stmt) @ [END] @ (compile_defs func_defs)
