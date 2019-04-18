@@ -90,24 +90,93 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code =
-  let suffix = function
+let rec list_constructor n = if n < 0 then [] else n :: list_constructor (n - 1)
+let list_init len = List.rev (list_constructor (len - 1))
+
+let op_suff op = match op with
   | "<"  -> "l"
   | "<=" -> "le"
+  | ">"  -> "g"
+  | ">=" -> "ge"
   | "==" -> "e"
   | "!=" -> "ne"
-  | ">=" -> "ge"
-  | ">"  -> "g"
-  | _    -> failwith "unknown operator"	
-  in
-  let rec compile' env scode = failwith "Not implemented" in
-  compile' env code
+  | _    -> failwith ("Unknown cmp operator")
+
+let compile_binop env op  =  
+   let rhs, lhs, env = env#pop2 in
+   let zero reg = Mov (L 0, reg) in
+   let space, env = env#allocate in
+   let cmp op l r = [ Mov (lhs, eax); 
+                           Binop ("cmp", rhs, eax); 
+                           Mov (eax, lhs);
+                           zero eax;
+                           Set (op_suff op, "%al"); 
+                           Mov (eax, space)] in
+   let res_instr_list = match op with
+    | "+" 
+    | "-" 
+    | "*"  ->  [Mov (lhs, eax); Binop (op, rhs, eax); Mov (eax, space)]
+    | "<=" 
+    | "<" 
+    | ">=" 
+    | ">" 
+    | "==" 
+    | "!=" -> cmp op lhs rhs
+    | "/"  -> [Mov (lhs, eax); zero edx; Cltd; IDiv rhs; Mov (eax, space)]        
+    | "%"  -> [Mov (lhs, eax); zero edx; Cltd; IDiv rhs; Mov (edx, space)]
+    | "!!" -> [zero eax; Mov (lhs, edx); Binop ("!!", rhs, edx); Set ("nz", "%al"); Mov (eax, space)]
+    | "&&" -> [zero eax; zero edx; 
+               Binop ("cmp", L 0, lhs); Set ("ne", "%al");
+               Binop ("cmp", L 0, rhs); Set ("ne", "%dl");
+               Binop ("&&", edx, eax); Mov   (eax, space)
+               ]
+    | _ -> failwith ("Unknown bin operator")
+  in env, res_instr_list
+
+let rec compile env prg = match prg with
+  | [] -> env, []
+  | ins::tail -> 
+    let crnt_env, instr_list = (
+     match ins with
+      | BINOP op -> compile_binop env op
+      | CONST x  -> let space, loc_env = env#allocate       in loc_env, [Mov (L x, space)]
+     (* | READ     -> let space, loc_env = env#allocate       in loc_env, [Call "Lread"; Mov (eax, space)]
+      | WRITE    -> let var  , loc_env = env#pop            in loc_env, [Push var; Call "Lwrite"; Pop eax]*)
+      | LD x     -> let space, loc_env = env#allocate       in
+                    let var            = env#loc x          in loc_env, [Mov (var, eax); Mov (eax, space)]
+      | ST x     -> let value, loc_env = (env#global x)#pop in
+                    let var            = env#loc x          in loc_env, [Mov (value, eax); Mov (eax,  var)]
+      | LABEL l  -> env, [Label l]
+      | CJMP (cond, l) -> let var  , loc_env = env#pop         in loc_env,[Binop ("cmp", L 0, var); CJmp (cond, l)]
+      | JMP l    -> env, [Jmp l]
+      | CALL (fun_name, args_count, is_prc) -> 
+        let (env, args) = List.fold_left (fun (env, args) _ -> let a, env = env#pop in (env, a::args)) (env, []) (list_init args_count) in
+        let (env, prg_res) = if is_prc then let (a, env) = env#allocate in env, [Mov (eax, a)]
+                            else env, [] in
+        env, (List.map (fun x -> Push x) args) @ [Call fun_name; Binop ("+", L (args_count * word_size), esp)] @ prg_res
+      | BEGIN (fun_name, params, locals) -> 
+        let push_regs = List.map (fun x -> Push (R x)) (list_init num_of_regs) in
+        let env = env#enter fun_name params locals in
+        let prolog = [Push ebp; Mov (esp, ebp)] in 
+        let restore_stack = [Binop ("-", M ("$" ^ env#lsize), esp)] in 
+        env, prolog @ push_regs @ restore_stack
+      | END ->
+        let pop_regs = List.map (fun x -> Pop (R x)) (List.rev (list_init num_of_regs)) in 
+        let meta = [Meta (Printf.sprintf "\t.set %s, %d" env#lsize (env#allocated * word_size))] in
+	let epilogue =  [Mov (ebp, esp); Pop ebp; Ret] in 
+          env, [Label env#epilogue] @ pop_regs @  epilogue @ meta
+      | RET flag ->
+        if flag then let a, env = env#pop in env, [Mov (a, eax); Jmp env#epilogue]
+        else env, [Jmp env#epilogue]
+      ) in
+        let result_env, result_instr_list = compile crnt_env tail in
+            result_env, (instr_list @ result_instr_list)
 
 (* A set of strings *)           
 module S = Set.Make (String)
 
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
+let make_assoc l = List.combine l (list_init (List.length l))
                      
 class env =
   object (self)
