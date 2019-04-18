@@ -150,10 +150,14 @@ let rec compile env prg = match prg with
       | CJMP (cond, l) -> let var  , loc_env = env#pop         in loc_env,[Binop ("cmp", L 0, var); CJmp (cond, l)]
       | JMP l    -> env, [Jmp l]
       | CALL (fun_name, args_count, is_prc) -> 
+        let actual_name = (match fun_name with
+            | "read" -> "Lread"
+            | "write" -> "Lwrite"
+            | _ -> fun_name) in
         let (env, args) = List.fold_left (fun (env, args) _ -> let a, env = env#pop in (env, a::args)) (env, []) (list_init args_count) in
         let (env, prg_res) = if is_prc then let (a, env) = env#allocate in env, [Mov (eax, a)]
                             else env, [] in
-        env, (List.map (fun x -> Push x) args) @ [Call fun_name; Binop ("+", L (args_count * word_size), esp)] @ prg_res
+        env, (List.map (fun x -> Push x) args) @ [Call actual_name; Binop ("+", L (args_count * word_size), esp)] @ prg_res
       | BEGIN (fun_name, params, locals) -> 
         let push_regs = List.map (fun x -> Push (R x)) (list_init num_of_regs) in
         let env = env#enter fun_name params locals in
